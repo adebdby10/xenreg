@@ -16,6 +16,7 @@ from telethon import TelegramClient, events
 
 # Pending OTP: message_id -> {phone, chat_id}
 pending_otp = {}
+cancel_requested = False
 
 BOT_TOKEN = "8857079643:AAHshunNy0KUkWOIql-1BAozk5UDBSCdicQ"
 API_ID = 5214566
@@ -396,6 +397,12 @@ async def status_handler(event):
         parse_mode="markdown"
     )
 
+@client.on(events.NewMessage(pattern="/cancel"))
+async def cancel_handler(event):
+    global cancel_requested
+    cancel_requested = True
+    await event.reply("\u2716 Batch dibatalkan. Kirim nomor baru untuk mulai lagi.")
+
 @client.on(events.NewMessage(func=lambda e: e.is_reply and e.text.strip().isdigit()))
 async def otp_reply_handler(event):
     replied = await event.get_reply_message()
@@ -450,6 +457,9 @@ async def numbers_handler(event):
         await event.reply("Maksimal 50 nomor per batch.")
         return
 
+    global cancel_requested
+    cancel_requested = False
+
     msg = await event.reply(f"⚡ Memproses {len(lines)} nomor dengan {CONCURRENCY} container paralel...")
 
     # Buat temp email
@@ -458,6 +468,8 @@ async def numbers_handler(event):
     sem = asyncio.Semaphore(CONCURRENCY)
 
     async def check_one(raw_num):
+        if cancel_requested:
+            return None
         async with sem:
             port = await pool.acquire()
             try:
@@ -480,6 +492,8 @@ async def numbers_handler(event):
 
     # Live progress: send new message each time a result completes
     for coro in asyncio.as_completed(tasks):
+        if cancel_requested:
+            break
         result = await coro
         # Find first None slot and insert
         for i, r in enumerate(results):
@@ -493,6 +507,13 @@ async def numbers_handler(event):
         progress_header = f"⚡ [{completed}/{total}] Memproses {total} nomor dengan {CONCURRENCY} container...\n\n"
         await msg.edit(progress_header + live_report, parse_mode="markdown", link_preview=False)
         await asyncio.sleep(0.5)
+
+    if cancel_requested:
+        cancel_requested = False
+        done_lines = [r for r in results if r is not None]
+        cancelled_lines = "\n".join(done_lines) + f"\n\n✖ **Batch dibatalkan.** ({len(lines) - completed} nomor skip)"
+        await msg.edit(cancelled_lines, parse_mode="markdown", link_preview=False)
+        return
 
     # Final report with summary
     done_lines = [r for r in results if r is not None]
