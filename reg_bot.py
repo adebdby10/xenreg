@@ -14,6 +14,9 @@ import json
 import time
 from telethon import TelegramClient, events
 
+# Pending OTP: message_id -> {phone, chat_id}
+pending_otp = {}
+
 BOT_TOKEN = "8857079643:AAHshunNy0KUkWOIql-1BAozk5UDBSCdicQ"
 API_ID = 5214566
 API_HASH = "03ee5a4be9848535eb9aace996f5202d"
@@ -242,6 +245,57 @@ def parse_phone(number: str) -> str:
         number = "+" + number
     return number
 
+async def register_number(phone: str, otp: str, port: int, mail_token: str) -> str:
+    try:
+        adb(port, "pm clear org.telegram.messenger")
+        await asyncio.sleep(1)
+        adb(port, "am start -n org.telegram.messenger/org.telegram.ui.LaunchActivity")
+        await asyncio.sleep(4)
+        tap(port, 360, 1036)
+        await asyncio.sleep(2)
+        cc, num = phone[1:4], phone[4:]
+        tap(port, 150, 600); await asyncio.sleep(0.3)
+        txt(port, cc); await asyncio.sleep(0.5)
+        tap(port, 400, 600); await asyncio.sleep(0.3)
+        txt(port, num); await asyncio.sleep(0.5)
+        tap(port, 624, 648); await asyncio.sleep(3)
+        tap_yes(port)
+        for _ in range(35):
+            await asyncio.sleep(1)
+            raw = get_ui_texts(port)
+            texts = [t for t in raw if t not in (
+                "Telegram", "The world's fastest messaging app.",
+                "It is free and secure.", "Your messages are protected.",
+            )]
+            all_t = " ".join(texts).lower()
+            if "add" in all_t and "email" in all_t:
+                return "ADD_EMAIL"
+            if any("email" in t.lower() for t in texts):
+                tap(port, 200, 420); await asyncio.sleep(0.5)
+                txt(port, TEMP_EMAIL); await asyncio.sleep(1)
+                tap(port, 624, 574); await asyncio.sleep(5)
+                code = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: poll_email_code(mail_token, 30))
+                if code:
+                    txt(port, code); await asyncio.sleep(5)
+                continue
+            if "code" in all_t or "enter" in all_t:
+                await asyncio.sleep(3)
+                txt(port, otp)
+                await asyncio.sleep(8)
+                check = get_ui_texts(port)
+                check_t = " ".join(check).lower()
+                if "invalid" in check_t or "wrong" in check_t:
+                    return "WRONG_CODE"
+                await asyncio.sleep(10)
+                final = get_ui_texts(port)
+                final_t = " ".join(final).lower()
+                if any(w in final_t for w in ["start", "continue", "let"]):
+                    return "SUCCESS"
+                return "UNKNOWN"
+        return "TIMEOUT"
+    except Exception as e:
+        return f"ERROR: {str(e)[:60]}"
 
 
 # --- Bot Handlers ---
@@ -260,7 +314,10 @@ async def start_handler(event):
         "📱 OTP_APP — OTP via aplikasi Telegram\n"
         "🚫 INVALID_NUMBER — nomor salah\n\n"
         "*Contoh:*\n"
-        "```\n+6281234567890\n+243802347360\n+60123456789\n```\n\n📲 *Registrasi OTP:*\nKirim `/reg <nomor> <kode>` untuk validasi OTP\nContoh: `/reg +584166047548 12345`",
+        "```\n+6281234567890\n+243802347360\n+60123456789\n```\n\n"
+        "📲 *OTP via SMS:*\n"
+        "Setelah scan selesai, bot kirim 1 pesan per nomor yang OTP_SENT.\n"
+        "Balas pesan itu dengan kode OTP untuk registrasi otomatis.",
         parse_mode="markdown"
     )
 
@@ -288,6 +345,47 @@ async def status_handler(event):
         f"\n\n⚡ Paralel: {CONCURRENCY} container\n📧 Email: {TEMP_EMAIL}",
         parse_mode="markdown"
     )
+
+@client.on(events.NewMessage(func=lambda e: e.is_reply and e.text.strip().isdigit()))
+async def otp_reply_handler(event):
+    replied = await event.get_reply_message()
+    if not replied or replied.id not in pending_otp:
+        return  # not our pending message
+
+    info = pending_otp[replied.id]
+    phone = info["phone"]
+    otp = event.text.strip()
+
+    if not re.match(r'^\d{4,10}$', otp):
+        await event.reply("\u274c Kode OTP harus 4-10 digit angka.")
+        return
+
+    status_msg = await event.reply(f"\u23f3 Registrasi `{phone}`...")
+
+    mail_token = ensure_temp_mail()
+    port = await pool.acquire()
+    try:
+        result = await register_number(phone, otp, port, mail_token)
+        del pending_otp[replied.id]  # clean up
+
+        if result == "SUCCESS":
+            await status_msg.edit(f"\u2705 REGISTRASI BERHASIL!\n\n`{phone}` \u2192 Akun Telegram berhasil dibuat!")
+        elif result == "WRONG_CODE":
+            # Keep pending so user can retry
+            await status_msg.edit(f"\u274c Kode Salah\n\n`{phone}` \u2192 OTP tidak valid. Coba kirim ulang kode dengan reply lagi.")
+        elif result == "ADD_EMAIL":
+            await status_msg.edit(f"\u2709\ufe0f Perlu Email\n\n`{phone}` \u2192 Nomor ini minta alamat email dulu.")
+            del pending_otp[replied.id]
+        elif result == "TIMEOUT":
+            await status_msg.edit(f"\u23f0 Timeout\n\n`{phone}` \u2192 Terlalu lama. Mungkin OTP sudah expired. Coba ulang.")
+            del pending_otp[replied.id]
+        else:
+            await status_msg.edit(f"\u26a0\ufe0f `{phone}` \u2192 {result}")
+            del pending_otp[replied.id]
+    except Exception as e:
+        await status_msg.edit(f"\u26a0\ufe0f Error: {str(e)[:80]}")
+    finally:
+        pool.release(port)
 
 @client.on(events.NewMessage(func=lambda e: not e.text.startswith("/")))
 async def numbers_handler(event):
@@ -360,6 +458,21 @@ async def numbers_handler(event):
     footer = f"\n\n📊 *Ringkasan:*\n✅ SMS: {otp_count} / 📱 App: {app_count} / ❌ Fee: {pay_count} / 📧 Email: {email_count} / ✉️ Add: {add_count} / ❓ Lain: {other}"
 
     await msg.edit(report + footer, parse_mode="markdown", link_preview=False)
+
+    # Kirim 1 pesan per nomor OTP_SENT (bisa di-reply)
+    otp_sent_phones = []
+    for line in done_lines:
+        if "OTP_SENT" in line and "OTP_APP" not in line:
+            m = re.search(r'`(\+\d+)`', line)
+            if m:
+                otp_sent_phones.append(m.group(1))
+
+    for phone in otp_sent_phones:
+        m = await event.reply(
+            f"📲 `{phone}` \u2192 OTP terkirim via SMS.\nBalas pesan ini dengan kode OTP untuk registrasi.",
+            parse_mode="markdown"
+        )
+        pending_otp[m.id] = {"phone": phone, "chat_id": event.chat_id}
 
 print(f"Bot v3 running — {CONCURRENCY} parallel containers on ports {ADB_PORTS}")
 client.run_until_disconnected()
