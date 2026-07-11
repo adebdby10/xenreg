@@ -1,0 +1,12 @@
+# Credentials
+config.py
+
+# Telethon session files
+*_session.session
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temp files
+/tmp/
