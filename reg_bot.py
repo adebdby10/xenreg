@@ -233,8 +233,6 @@ def emoji_for(result: str) -> str:
         "TIMEOUT": "⏰",
         "ERROR": "⚠️",
         "UNKNOWN": "❓",
-        "SUCCESS": "✅",
-        "WRONG_CODE": "❌",
     }
     return mapping.get(result, "❓")
 
@@ -245,69 +243,6 @@ def parse_phone(number: str) -> str:
     return number
 
 
-async def register_number(phone: str, otp: str, port: int, mail_token: str) -> str:
-    """Full registration: enter phone, handle email, enter OTP, check result."""
-    try:
-        adb(port, "pm clear org.telegram.messenger")
-        await asyncio.sleep(1)
-        adb(port, "am start -n org.telegram.messenger/org.telegram.ui.LaunchActivity")
-        await asyncio.sleep(4)
-        tap(port, 360, 1036)
-        await asyncio.sleep(2)
-
-        cc, num = phone[1:4], phone[4:]
-        tap(port, 150, 600); await asyncio.sleep(0.3)
-        txt(port, cc); await asyncio.sleep(0.5)
-        tap(port, 400, 600); await asyncio.sleep(0.3)
-        txt(port, num); await asyncio.sleep(0.5)
-        tap(port, 624, 648); await asyncio.sleep(3)
-        tap_yes(port)
-
-        # Wait for OTP/email screen
-        for _ in range(35):
-            await asyncio.sleep(1)
-            raw = get_ui_texts(port)
-            texts = [t for t in raw if t not in (
-                "Telegram", "The world's fastest messaging app.",
-                "It is free and secure.", "Your messages are protected.",
-            )]
-            all_t = " ".join(texts).lower()
-
-            if "add" in all_t and "email" in all_t:
-                return "ADD_EMAIL"
-
-            if any("email" in t.lower() for t in texts):
-                tap(port, 200, 420); await asyncio.sleep(0.5)
-                txt(port, TEMP_EMAIL); await asyncio.sleep(1)
-                tap(port, 624, 574); await asyncio.sleep(5)
-                code = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: poll_email_code(mail_token, 30))
-                if code:
-                    txt(port, code); await asyncio.sleep(5)
-                continue
-
-            if "code" in all_t or "enter" in all_t:
-                await asyncio.sleep(3)
-                txt(port, otp)
-                await asyncio.sleep(8)
-
-                # Check for wrong code
-                check = get_ui_texts(port)
-                check_t = " ".join(check).lower()
-                if "invalid" in check_t or "wrong" in check_t:
-                    return "WRONG_CODE"
-
-                # Wait for registration to complete
-                await asyncio.sleep(10)
-                final = get_ui_texts(port)
-                final_t = " ".join(final).lower()
-                if any(w in final_t for w in ["start", "continue", "let"]):
-                    return "SUCCESS"
-                return "UNKNOWN"
-
-        return "TIMEOUT"
-    except Exception as e:
-        return f"ERROR: {str(e)[:60]}"
 
 # --- Bot Handlers ---
 @client.on(events.NewMessage(pattern="/start"))
@@ -353,51 +288,6 @@ async def status_handler(event):
         f"\n\n⚡ Paralel: {CONCURRENCY} container\n📧 Email: {TEMP_EMAIL}",
         parse_mode="markdown"
     )
-
-@client.on(events.NewMessage(pattern="/reg"))
-async def reg_handler(event):
-    text = event.text.strip()
-    parts = text.split()
-    if len(parts) < 3:
-        await event.reply(
-            "Format: `/reg <nomor> <kode_otp>`\n"
-            "Contoh: `/reg +584166047548 12345`",
-            parse_mode="markdown"
-        )
-        return
-
-    phone = parse_phone(parts[1])
-    otp = parts[2]
-
-    if not re.match(r'^\+\d{7,15}$', phone):
-        await event.reply("Nomor salah: `%s`" % parts[1])
-        return
-
-    if not re.match(r'^\d{4,8}$', otp):
-        await event.reply("Kode OTP harus 4-8 digit")
-        return
-
-    msg = await event.reply("Mendaftarkan `%s`..." % phone)
-
-    mail_token = ensure_temp_mail()
-    port = await pool.acquire()
-    try:
-        result = await register_number(phone, otp, port, mail_token)
-        emoji = emoji_for(result)
-        if result == "SUCCESS":
-            await msg.edit("\u2705 REGISTRASI BERHASIL!\n\n`%s` -> %s %s" % (phone, emoji, result))
-        elif result == "WRONG_CODE":
-            await msg.edit("\u274c Kode Salah\n\n`%s` -> %s %s" % (phone, emoji, result))
-        elif result == "ADD_EMAIL":
-            await msg.edit("\u2709\ufe0f Perlu Email\n\n`%s` -> %s %s" % (phone, emoji, result))
-        elif result == "TIMEOUT":
-            await msg.edit("\u23f0 Timeout\n\n`%s` -> %s %s" % (phone, emoji, result))
-        else:
-            await msg.edit("\u26a0\ufe0f `%s` -> %s %s" % (phone, emoji, result))
-    except Exception as e:
-        await msg.edit("\u26a0\ufe0f Error: %s" % str(e)[:80])
-    finally:
-        pool.release(port)
 
 @client.on(events.NewMessage(func=lambda e: not e.text.startswith("/")))
 async def numbers_handler(event):
