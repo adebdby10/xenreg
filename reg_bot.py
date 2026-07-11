@@ -87,6 +87,20 @@ def adb(port, cmd):
 def tap(port, x, y):
     adb(port, f"input tap {x} {y}")
 
+def tap_done(port):
+    subprocess.run(f"adb -s 127.0.0.1:{port} shell uiautomator dump /sdcard/rb_done.xml", shell=True, capture_output=True)
+    r = subprocess.run(f"adb -s 127.0.0.1:{port} shell cat /sdcard/rb_done.xml", shell=True, capture_output=True, text=True)
+    for btn in ("Done", "Next", "OK", "Go"):
+        m = re.search(r'content-desc="' + btn + r'"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', r.stdout)
+        if m:
+            cx = (int(m.group(1)) + int(m.group(3))) // 2
+            cy = (int(m.group(2)) + int(m.group(4))) // 2
+            subprocess.run(f"adb -s 127.0.0.1:{port} shell input tap {cx} {cy}", shell=True)
+            return True
+    adb(port, "input keyevent 66")  # KEYCODE_ENTER
+    return False
+
+
 def extract_country_code(phone):
     phone = phone.lstrip("+")
     cc3 = {"243", "591", "212", "216", "218", "220", "221", "222", "223", "224",
@@ -145,19 +159,25 @@ async def check_number_full(phone: str, port: int, mail_token: str) -> tuple:
         await asyncio.sleep(1)
         adb(port, "am start -n org.telegram.messenger/org.telegram.ui.LaunchActivity")
         await asyncio.sleep(4)
-        tap(port, 360, 1036)
-        await asyncio.sleep(2)
+        # Tap Start Messaging with retry
+        for _ in range(3):
+            tap(port, 360, 1036)
+            await asyncio.sleep(3)
+            chk = [t.lower() for t in get_ui_texts(port) if t]
+            if any("phone" in t for t in chk) or any("confirm" in t for t in chk):
+                break
 
+        # Split phone number into country code + number
         cc_code, num = extract_country_code(phone)
-        tap(port, 150, 600)
+        tap(port, 155, 604)  # country code field
         await asyncio.sleep(0.3)
         txt(port, cc_code)
         await asyncio.sleep(0.5)
-        tap(port, 400, 600)
+        tap(port, 432, 604)  # phone number field
         await asyncio.sleep(0.3)
         txt(port, num)
         await asyncio.sleep(0.5)
-        tap(port, 624, 648)
+        tap(port, 624, 648)  # Next button
         await asyncio.sleep(3)
 
         # Tap "Yes" on confirmation dialog if it appears
@@ -277,12 +297,16 @@ async def register_number(phone: str, otp: str, port: int, mail_token: str) -> s
         await asyncio.sleep(1)
         adb(port, "am start -n org.telegram.messenger/org.telegram.ui.LaunchActivity")
         await asyncio.sleep(4)
-        tap(port, 360, 1036)
-        await asyncio.sleep(2)
+        for _ in range(3):
+            tap(port, 360, 1036)
+            await asyncio.sleep(3)
+            chk = [t.lower() for t in get_ui_texts(port) if t]
+            if any("phone" in t for t in chk) or any("confirm" in t for t in chk):
+                break
         cc_code, num = extract_country_code(phone)
-        tap(port, 150, 600); await asyncio.sleep(0.3)
+        tap(port, 155, 604); await asyncio.sleep(0.3)
         txt(port, cc_code); await asyncio.sleep(0.5)
-        tap(port, 400, 600); await asyncio.sleep(0.3)
+        tap(port, 432, 604); await asyncio.sleep(0.3)
         txt(port, num); await asyncio.sleep(0.5)
         tap(port, 624, 648); await asyncio.sleep(3)
         tap_yes(port)
