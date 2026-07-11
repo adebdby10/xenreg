@@ -87,6 +87,33 @@ def adb(port, cmd):
 def tap(port, x, y):
     adb(port, f"input tap {x} {y}")
 
+def extract_country_code(phone):
+    phone = phone.lstrip("+")
+    cc3 = {"243", "591", "212", "216", "218", "220", "221", "222", "223", "224",
+           "225", "226", "227", "228", "229", "230", "231", "232", "233", "234",
+           "235", "236", "237", "238", "239", "240", "241", "242", "244", "245",
+           "246", "247", "248", "249", "250", "251", "252", "253", "254", "255",
+           "256", "257", "258", "260", "261", "262", "263", "264", "265", "266",
+           "267", "268", "269", "290", "291", "297", "298", "299", "350", "351",
+           "352", "353", "354", "355", "356", "357", "358", "359", "370", "371",
+           "372", "373", "374", "375", "376", "377", "378", "380", "381", "382",
+           "385", "386", "387", "389", "420", "421", "423", "500", "501", "502",
+           "503", "504", "505", "506", "507", "508", "509", "590", "592", "593",
+           "594", "595", "596", "597", "598", "599", "670", "672", "673", "674",
+           "675", "676", "677", "678", "679", "680", "681", "682", "683", "685",
+           "686", "687", "688", "689", "690", "691", "692", "800", "808", "850",
+           "852", "853", "855", "856", "858", "859", "870", "878", "880", "881",
+           "882", "883", "886", "960", "961", "962", "963", "964", "965", "966",
+           "967", "968", "970", "971", "972", "973", "974", "975", "976", "977",
+           "992", "993", "994", "995", "996", "998"}
+    if phone.startswith("1") and len(phone) >= 11:
+        return "1", phone[1:]
+    if len(phone) >= 3 and phone[:3] in cc3:
+        return phone[:3], phone[3:]
+    return phone[:2], phone[2:]
+
+
+
 def txt(port, t):
     adb(port, f'input text "{t}"')
 
@@ -121,11 +148,10 @@ async def check_number_full(phone: str, port: int, mail_token: str) -> tuple:
         tap(port, 360, 1036)
         await asyncio.sleep(2)
 
-        cc = phone[1:4]
-        num = phone[4:]
+        cc_code, num = extract_country_code(phone)
         tap(port, 150, 600)
         await asyncio.sleep(0.3)
-        txt(port, cc)
+        txt(port, cc_code)
         await asyncio.sleep(0.5)
         tap(port, 400, 600)
         await asyncio.sleep(0.3)
@@ -253,9 +279,9 @@ async def register_number(phone: str, otp: str, port: int, mail_token: str) -> s
         await asyncio.sleep(4)
         tap(port, 360, 1036)
         await asyncio.sleep(2)
-        cc, num = phone[1:4], phone[4:]
+        cc_code, num = extract_country_code(phone)
         tap(port, 150, 600); await asyncio.sleep(0.3)
-        txt(port, cc); await asyncio.sleep(0.5)
+        txt(port, cc_code); await asyncio.sleep(0.5)
         tap(port, 400, 600); await asyncio.sleep(0.3)
         txt(port, num); await asyncio.sleep(0.5)
         tap(port, 624, 648); await asyncio.sleep(3)
