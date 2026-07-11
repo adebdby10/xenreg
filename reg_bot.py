@@ -18,6 +18,8 @@ from telethon import TelegramClient, events
 pending_otp = {}
 cancel_requested = False
 
+ALLOWED_USERS = {7208333439}
+
 BOT_TOKEN = "8857079643:AAHshunNy0KUkWOIql-1BAozk5UDBSCdicQ"
 API_ID = 5214566
 API_HASH = "03ee5a4be9848535eb9aace996f5202d"
@@ -350,8 +352,13 @@ async def register_number(phone: str, otp: str, port: int, mail_token: str) -> s
 
 
 # --- Bot Handlers ---
+def is_allowed(event):
+    return event.chat_id in ALLOWED_USERS
+
+
 @client.on(events.NewMessage(pattern="/start"))
 async def start_handler(event):
+    if not is_allowed(event): return
     await event.reply(
         "🤖 *Registration Check Bot v3 — Multi Container 🔥*\n\n"
         "Kirim daftar nomor telepon (1 nomor per baris).\n"
@@ -374,6 +381,7 @@ async def start_handler(event):
 
 @client.on(events.NewMessage(pattern="/newmail"))
 async def newmail_handler(event):
+    if not is_allowed(event): return
     global TEMP_EMAIL
     ts = str(int(time.time()))[-6:]
     new_email = f"xentest{ts}@web-library.net"
@@ -386,6 +394,7 @@ async def newmail_handler(event):
 
 @client.on(events.NewMessage(pattern="/status"))
 async def status_handler(event):
+    if not is_allowed(event): return
     statuses = []
     for p in ADB_PORTS:
         r = subprocess.run(f"adb -s 127.0.0.1:{p} shell echo OK", shell=True, capture_output=True, text=True, timeout=3)
@@ -399,12 +408,14 @@ async def status_handler(event):
 
 @client.on(events.NewMessage(pattern="/cancel"))
 async def cancel_handler(event):
+    if not is_allowed(event): return
     global cancel_requested
     cancel_requested = True
     await event.reply("\u2716 Batch dibatalkan. Kirim nomor baru untuk mulai lagi.")
 
 @client.on(events.NewMessage(func=lambda e: e.is_reply and e.text.strip().isdigit()))
 async def otp_reply_handler(event):
+    if not is_allowed(event): return
     replied = await event.get_reply_message()
     if not replied or replied.id not in pending_otp:
         return  # not our pending message
@@ -446,6 +457,7 @@ async def otp_reply_handler(event):
 
 @client.on(events.NewMessage(func=lambda e: not e.text.startswith("/")))
 async def numbers_handler(event):
+    if not is_allowed(event): return
     text = event.text.strip()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
 
